@@ -11,7 +11,8 @@ output: html_document
 #set WD and load packages
 setwd("/Users/kennethenevoldsen/Desktop/Github/Statistic R/Assignments/EyeTracking/EyeTracking/")
 library(pacman)
-p_load(data.table, lmerTest, dplyr, groupdata2, stringr, MuMIn, cvms, ggplot2)
+p_load(data.table, lmerTest, dplyr, groupdata2, stringr, MuMIn, cvms, ggplot2, jpeg, grid)
+
 
 #loading data
 df_fix = read.delim("Eye tracking data/FixationsV1.csv", sep = ",")
@@ -53,7 +54,7 @@ df_sample1 = clean_df(df_sample)
 
 df_sac1$SearchType = as.factor(df_sac1$SearchType)
 
-### social engagement models
+### social engagement
 
 se_df <- subset(df_fix1, Task == "SocialEngagement")
 se_df$Direction <- as.factor(se_df$Direction)  ; se_df$Ostensive <- as.factor(se_df$Ostensive)
@@ -87,46 +88,52 @@ getPerformance = function(test_df, train_df, mdl, mdl_string, n = NA){
 } #Getting performance
 
   #defining a cross validate function
-CrossVal = function(num_folds, dataset, mdl_string, ID_col = NULL, CAT_col = NULL, glmer = T) {
-
+CrossVal = function(num_folds, dataset, mdl_string, ID_col = NULL, CAT_col = NULL, glmer = T, link = "log") {
+  
   #folding the dataset
   dataset = fold(dataset, num_folds, cat_col = CAT_col, id_col = ID_col, method = 'n_dist')
   
-    #looping through the folds
+  #looping through the folds
   for (fold in seq(num_folds)) {
     train_df = subset(dataset, .folds != fold)
     test_df = subset(dataset, .folds == fold)
     
     if (glmer == T){
-    #train data on all except the fold
-    mdl = try(glmer(mdl_string, train_df, family = gaussian(link = "log"), 
-                control = #adding an optimizer
-                  glmerControl(optimizer = "nloptwrap", calc.derivs = FALSE)))
+      if (link == "log"){
+        #train data on all except the fold
+        mdl = try(glmer(mdl_string, train_df, family = gaussian(link = "log"), 
+                        control = glmerControl(optimizer = "nloptwrap", calc.derivs = FALSE)))
+      } else {
+        #train data on all except the fold
+        mdl = try(glmer(mdl_string, train_df, family = gaussian, 
+                        control = glmerControl(optimizer = "nloptwrap", calc.derivs = FALSE)))
+      }
     } else {
       mdl = try(glm(mdl_string, train_df, family = gaussian(link = "log")))
     }
     temp_sum = try(summary(mdl))
     if (length(temp_sum) > 3){ #if you could make a model
-        #asses performance and append it to a df
+      #asses performance and append it to a df
       temp = getPerformance(test_df, train_df, mdl, mdl_string, n = fold)
     } else {#if you couldn't make a model
       temp = data.frame(rmse = NA,
-                          AIC = NA,
-                          BIC = NA,
-                          LogLik = NA,
-                          n = n)
+                        AIC = NA,
+                        BIC = NA,
+                        LogLik = NA,
+                        n = n)
     }
     temp$mdl = mdl_string
     temp$numfolds = num_folds
     if (fold == 1){ #if first part - make a df
       perf_df = temp
-    } else{ #else append to df
+    } else { #else append to df
       perf_df = rbind(perf_df, temp)  
     }
     
   }
   return(perf_df)
 }
+
 
 se_mdl_list = c("PupilSize ~ 1 + Ostensive*Direction + (1 + Ostensive*Direction|ParticipantID)", 
              "PupilSize ~ 1 + Ostensive*Direction + Trial + (1 + Ostensive*Direction + Trial|ParticipantID)",
@@ -152,38 +159,130 @@ se_perf_df_sum = group_by(se_perf_df, mdl) %>%
   summarise_all(funs(mean(., na.rm = TRUE)))
 
 
+#Social engagement visualisations
+
+#setting color palette
+jet.colors = colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan", "#7FFF7F", "yellow", "#FF7F00", "red", "#7F0000"))
+
+  #Scanpath
+    #reading img
+img_fdiro <- readJPEG("stimSocialEngPics/fdiro.jpg")
+g_fdiro <- rasterGrob(img_fdiro, interpolate = T)
+
+se_df1 = subset(se_df, ParticipantID=='1_2_f' & video=='f_pl_o1_dir_+o')
+ggplot(se_df1, aes(x = PositionX-200, y = 1141-PositionY)) +
+  xlim(0,1518) +
+  ylim(0, 1140) +
+  annotation_custom(g_fdiro, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) +
+  geom_point(size = se_df1$Duration/200, alpha = 0.5, color = "white") + 
+  geom_path(size = 1, alpha = 0.3) + 
+  geom_text(aes(label = Fixation, size = 5))
+
+img_mdiv <- readJPEG("stimSocialEngPics/mdiv.jpg")
+g_mdiv <- rasterGrob(img_mdiv, interpolate = T)
+
+se_df1 = subset(se_df, ParticipantID=='1_2_f' & video=='m_pl_o1_div_-o')
+ggplot(se_df1, aes(x = PositionX-200, y = 1141-PositionY)) +
+  xlim(0,1518) +
+  ylim(0, 1140) +
+  annotation_custom(g_mdiv, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) +
+  geom_point(size = se_df1$Duration/200, alpha = 0.5, color = "white") + 
+  geom_path(size = 1, alpha = 0.3) + 
+  geom_text(aes(label = Fixation, size = 5))
+
+  #PS growth curve
+ggplot(se_df, aes(x = StartTime, y = PupilSize), na.rm = T) +
+  facet_grid(~Direction + Ostensive) +
+  geom_smooth()
+
 
 ###Visual Seach models
   #visual seach patterns are affected by task structure
 
-m1 = lmer(Amplitude ~ SearchType + Saccade +  (1 + Saccade + SearchType|ParticipantID), subset(df_sac1, Task == "VisualSearch"), REML = F)
-summary(m1)
+vs_fix <-  subset(df_fix1, Task == "VisualSearch")
+vs_sac <-  subset(df_sac1, Task == "VisualSearch")
 
-m1 = lmer(Duration ~ SearchType + (1 + SearchType|ParticipantID), subset(df_fix1, Task == "VisualSearch"), REML = F)
-summary(m1)
+  #the to primary models 
+m2 = glmer(Duration ~ SearchType*Fixation +  (1 + SearchType*Fixation|ParticipantID), vs_fix, 
+           family = gaussian(link = "log"), 
+           control = glmerControl(optimizer = "nloptwrap", calc.derivs = FALSE))
 
-m3 = glmer(Duration ~ SearchType + (1 + SearchType|ParticipantID), subset(df_fix1, Task == "VisualSearch"), family = gaussian(link = "log"), 
-                control = #adding an optimizer
-                  glmerControl(optimizer = "nloptwrap", calc.derivs = FALSE))
+m3 = glmer(Amplitude ~ SearchType*Saccade + (1 + SearchType*Saccade|ParticipantID), vs_sac, 
+           family = gaussian(link = "log"), 
+           control = glmerControl(optimizer = "nloptwrap", calc.derivs = FALSE))
 
-mdl_list = c("Duration ~ SearchType + (1 + SearchType|ParticipantID)", 
-             "Duration ~ SearchType + Trial + (1 + Trial + SearchType|ParticipantID)", 
-             "Duration ~ SearchType*Trial + (1 + Trial + SearchType|ParticipantID)" 
+summary(m2)
+summary(m3)
+  
+  #variations of the two models
+m2_list = c("Duration ~ SearchType*Fixation + (1 + SearchType*Fixation|ParticipantID)", 
+             "Duration ~ SearchType+Fixation + (1 + SearchType+Fixation|ParticipantID)", 
+             "Duration ~ SearchType + (1 + SearchType|ParticipantID)" 
+             )
+
+m3_list = c("Amplitude ~ SearchType*Saccade + (1 + SearchType*Saccade|ParticipantID)", 
+             "Amplitude ~ SearchType+Saccade + (1 + SearchType+Saccade|ParticipantID)", 
+             "Amplitude ~ SearchType + (1 + SearchType|ParticipantID)" 
              )
 
 
-VS = subset(df_fix1, Task == "VisualSearch")
 
-#setting vectors to be the right types
-VS$Task = as.factor(as.character(VS$Task))
-VS$Trial = as.integer(VS$Trial)
-VS$ParticipantID = droplevels(VS$ParticipantID)
-VS$SearchType = as.factor(VS$SearchType)
+  #setting vectors to be the right types
+vs_fix$Task = as.factor(as.character(vs_fix$Task))
+vs_fix$Trial = as.integer(vs_fix$Trial)
+vs_fix$ParticipantID = droplevels(vs_fix$ParticipantID)
+vs_fix$SearchType = as.factor(vs_fix$SearchType)
 
-perf_df = CrossVal(num_folds = 3, dataset = VS, mdl_string = mdl_list[1], ID_col = "ParticipantID", CAT_col = "SearchType", glmer = T)
+  #CrossVal of the two models
+
+time.start = proc.time()
+for (model_string in m2_list){ #apply CrossVal to all of the model variations
+  temp = CrossVal(num_folds = 3, dataset = vs_fix, mdl_string = model_string, ID_col = "ParticipantID", CAT_col = NULL, glmer = T)
+  if (model_string == m2_list[1]){
+    vs_perf_df1 = temp
+  } else {
+    vs_perf_df1 = rbind(vs_perf_df1, temp)
+  }
+  print(paste("Running for (model_string in m2_list)",
+          round(match(model_string, m2_list)/length(m2_list)*100), 
+          "%", "- in", round((proc.time() - time.start)[3], 2), "seconds"), sep =  "") 
+}
+
+vs_perf_df1_sum = group_by(vs_perf_df1, mdl) %>%
+  summarise_all(funs(mean(., na.rm = TRUE)))
 
 
-#Using ludvigs package (doesn't seem to work)
+time.start = proc.time()
+for (model_string in m3_list){ #apply CrossVal to all of the model variations
+  temp = CrossVal(num_folds = 3, dataset = vs_sac, mdl_string = model_string, ID_col = "ParticipantID", CAT_col = NULL, glmer = T)
+  if (model_string == m3_list[1]){
+    vs_perf_df2 = temp
+  } else {
+    vs_perf_df2 = rbind(vs_perf_df1, temp)
+  }
+  print(paste("Running for (model_string in m3_list)",
+          round(match(model_string, m3_list)/length(m3_list)*100), 
+          "%", "- in", round((proc.time() - time.start)[3], 2), "seconds"), sep =  "") 
+}
+
+vs_perf_df2_sum = group_by(vs_perf_df2, mdl) %>%
+  summarise_all(funs(mean(., na.rm = TRUE)))
+
+  #updated versions of the original models based on the crossVal 
+m2 = glmer(Duration ~ SearchType + (1 + SearchType|ParticipantID), vs_fix, 
+           family = gaussian(link = "log"), 
+           control = glmerControl(optimizer = "nloptwrap", calc.derivs = FALSE))
+
+m3 = glmer(Amplitude ~ SearchType + (1 + SearchType|ParticipantID), vs_sac, 
+           family = gaussian(link = "log"), 
+           control = glmerControl(optimizer = "nloptwrap", calc.derivs = FALSE))
+
+summary(m2)
+summary(m3)
+
+
+
+###Using ludvigs package (doesn't seem to work) - ignore this
 fold_VS = fold(subset(df_fix1, Task == "VisualSearch"), 3, cat_col = "SearchType", id_col = "ParticipantID")
 
 #setting vectors to be the right types
@@ -196,19 +295,8 @@ perf_df = cross_validate(data = fold_VS, models = "Duration ~ SearchType + (1 + 
   link = "log")
 perf_df
 
+### Visual search visualizations
 
-
-
-
-
-```
-
-#Visualizations
-```{r}
-p_load(jpeg, grid)
-
-#setting color palette
-jet.colors = colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan", "#7FFF7F", "yellow", "#FF7F00", "red", "#7F0000"))
 #reading img
 img_c <- readJPEG("Eye tracking data/eyetrackingscripts/foraging/ng090ws.jpg")
 g_c <- rasterGrob(img_c, interpolate = T)
@@ -216,7 +304,7 @@ img_s <- readJPEG("Eye tracking data/eyetrackingscripts/foraging/ng021ws.jpg")
 g_s <- rasterGrob(img_s, interpolate = T)
 
 #Heatmap
-ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==1), aes(x = PositionX, y = PositionY)) +
+ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==1), aes(x = PositionX, y = 1081 -PositionY)) +
   xlim(0,1920) +
   ylim(0, 1080) +
   annotation_custom(g_c, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) +
@@ -224,7 +312,7 @@ ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==1
 scale_alpha(range = c(0.1, 0.6)) + scale_fill_gradientn(colours = jet.colors(10), trans='sqrt')
 
 
-ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==6), aes(x = PositionX, y = PositionY)) +
+ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==6), aes(x = PositionX, y = 1081 - PositionY)) +
   xlim(0,1920) +
   ylim(0, 1080) +
   annotation_custom(g_s, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) +
@@ -233,7 +321,7 @@ scale_alpha(range = c(0.1, 0.6)) + scale_fill_gradientn(colours = jet.colors(10)
 
 
 #Scanpath
-ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==6), aes(x = PositionX, y = PositionY)) +
+ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==6), aes(x = PositionX, y = 1081-PositionY)) +
   xlim(0,1920) +
   ylim(0, 1080) +
   annotation_custom(g_s, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) +
@@ -241,7 +329,7 @@ ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==6
   geom_path(size = 1, alpha = 0.3) + 
   geom_text(aes(label = Fixation, size = 5))
 
-ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==1), aes(x = PositionX, y = PositionY)) +
+ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==1), aes(x = PositionX, y = 1081-PositionY)) +
   xlim(0,1920) +
   ylim(0, 1080) +
   annotation_custom(g_c, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) +
@@ -249,10 +337,14 @@ ggplot(subset(df_fix1, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==1
   geom_path(size = 1, alpha = 0.3) + 
   geom_text(aes(label = Fixation, size = 5))
 
+  #VS amp density curve
+ggplot(vs_sac, aes(x = Amplitude, color = SearchType), na.rm = T) +
+  geom_density()
+ggplot(vs_sac, aes(x = Amplitude, color = ParticipantID), na.rm = T) +
+  facet_grid(~SearchType) +
+  geom_density()
 
-#pupilsize
-
-
+colnames(vs_sac)
 
 
 ```
