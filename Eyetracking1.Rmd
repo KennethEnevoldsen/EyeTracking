@@ -60,7 +60,7 @@ se_df <- subset(df_fix1, Task == "SocialEngagement")
 se_df$Direction <- as.factor(se_df$Direction)  ; se_df$Ostensive <- as.factor(se_df$Ostensive)
 se_df = droplevels(se_df)
 length(unique(se_df$ParticipantID))
-m1 = glmer(PupilSize ~ 1 + Ostensive*Direction + (1 + Ostensive*Direction|ParticipantID), se_df, family = gaussian(link = "log"), 
+m1 = glmer(PupilSize ~ 1 + Ostensive*Direction*Trial + (1 + Ostensive*Direction*Trial|ParticipantID), se_df, family = gaussian(link = "log"), 
                 control = glmerControl(optimizer = "nloptwrap", calc.derivs = FALSE))
 summary(m1)
 
@@ -137,6 +137,7 @@ CrossVal = function(num_folds, dataset, mdl_string, ID_col = NULL, CAT_col = NUL
 
 se_mdl_list = c("PupilSize ~ 1 + Ostensive*Direction + (1 + Ostensive*Direction|ParticipantID)", 
              "PupilSize ~ 1 + Ostensive*Direction + Trial + (1 + Ostensive*Direction + Trial|ParticipantID)",
+             "PupilSize ~ 1 + Ostensive*Direction*Trial + (1 + Ostensive*Direction*Trial|ParticipantID)",
              "PupilSize ~ 1 + Ostensive + Direction + (1 + Ostensive+Direction|ParticipantID)", 
              "PupilSize ~ 1 + Ostensive + (1 + Ostensive|ParticipantID)", 
              "PupilSize ~ 1 + Direction + (1 + Direction|ParticipantID)"
